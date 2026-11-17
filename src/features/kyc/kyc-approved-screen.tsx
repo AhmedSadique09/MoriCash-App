@@ -11,13 +11,13 @@ import { Text } from "@/components/ui/text";
 import { PlainBar } from "@/components/ui/top-bar";
 import { WinStage } from "@/components/ui/win-stage";
 import { resetTo } from "@/lib/navigation";
+import { startSend } from "@/features/send/start-send";
 import { fullPhone } from "@/lib/phone";
 import {
   useOnboardingStore,
   type Country,
   type User,
 } from "@/stores/onboarding-store";
-import { toast } from "@/stores/toast-store";
 
 // Direct entry (no signup yet) falls back to the prototype's demo user.
 const FALLBACK_USER: User = {
@@ -50,8 +50,9 @@ export function KycApprovedScreen() {
   const handleHome = () => resetTo(router, "/home");
 
   const handleSend = () => {
+    // Leave onboarding for Home first, then open the real send flow on top.
     handleHome();
-    toast("Sending arrives in a later phase.");
+    startSend(router);
   };
 
   return (

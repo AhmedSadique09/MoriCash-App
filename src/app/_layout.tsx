@@ -5,6 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { Appearance, Platform } from "react-native";
 
+import { BannerHost } from "@/components/ui/banner-host";
 import { ToastHost } from "@/components/ui/toast";
 import { colors } from "@/theme/colors";
 import { fontAssets } from "@/theme/fonts";
@@ -40,11 +41,14 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: colors.bg },
         }}
       >
-        {/* Swipe-back must not return into the onboarding stack from these. */}
-        <Stack.Screen name="home" options={{ gestureEnabled: false }} />
+        {/* Swipe-back must not return into a finished flow from these. */}
+        <Stack.Screen name="(tabs)" options={{ gestureEnabled: false }} />
         <Stack.Screen name="kyc/pending" options={{ gestureEnabled: false }} />
         <Stack.Screen name="kyc/approved" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="send/track" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="send/receipt" options={{ gestureEnabled: false }} />
       </Stack>
+      <BannerHost />
       <ToastHost />
     </>
   );
