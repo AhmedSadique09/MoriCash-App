@@ -1,11 +1,29 @@
-import { Text, View } from "react-native";
+import { useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { useEffect } from "react";
+import { useReducedMotion } from "react-native-reanimated";
 
-export default function Index() {
+import { SplashView } from "@/features/splash/splash-view";
+
+const SPLASH_MS = 2200;
+const SPLASH_REDUCED_MS = 500;
+
+export default function SplashRoute() {
+  const router = useRouter();
+  const isReduced = useReducedMotion();
+
+  useEffect(() => {
+    const timer = setTimeout(
+      () => router.replace("/welcome"),
+      isReduced ? SPLASH_REDUCED_MS : SPLASH_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [router, isReduced]);
+
   return (
-    <View className="flex-1 items-center justify-center bg-yellow-300">
-      <Text className="text-xl font-bold text-blue-900">
-        Welcome to Nativewind!
-      </Text>
-    </View>
+    <>
+      <StatusBar style="dark" />
+      <SplashView />
+    </>
   );
 }

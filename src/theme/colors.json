@@ -1,0 +1,22 @@
+{
+  "page": "#050607",
+  "bg": "#0A0B0D",
+  "surface": "#15171B",
+  "surface-2": "#1F2228",
+  "line": "#2A2E35",
+  "ink": "#F3F4F6",
+  "ink-2": "#A7ADB8",
+  "ink-3": "#8C929D",
+  "sun": "#FFD400",
+  "on-sun": "#0A0B0D",
+  "sun-soft": "#2C2608",
+  "sky": "#00B2E5",
+  "pos": "#4CC38A",
+  "pos-soft": "#10291E",
+  "neg": "#FF7A6B",
+  "neg-soft": "#331512",
+  "warn": "#F2B544",
+  "warn-soft": "#2E2410",
+  "tab": "#0F1013",
+  "usdt": "#26A17B"
+}
