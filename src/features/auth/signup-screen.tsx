@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ScrollView, View } from "react-native";
 
 import { Button } from "@/components/ui/button";
@@ -9,33 +9,123 @@ import { KeyboardAvoid } from "@/components/ui/keyboard-avoid";
 import { Footer, Screen } from "@/components/ui/screen";
 import { Text } from "@/components/ui/text";
 import { ObBar } from "@/components/ui/top-bar";
-import { isValidEmail } from "@/lib/validation";
+import type { ApiError } from "@/interfaces/auth.interface";
+import { authService, getApiError } from "@/services/auth.service";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { toast } from "@/stores/toast-store";
+import { signupEmailSchema, validateForm } from "@/validation";
 
 import { LinkButton } from "./link-button";
 
-const EMAIL_ERROR = "Enter a valid email, like name@example.com.";
 const UNAVAILABLE_MESSAGE = "Not part of this prototype yet";
+const NETWORK_MESSAGE =
+  "Can't reach MoriCash. Check your connection and try again.";
+const HTTP_BAD_REQUEST = 400;
+const HTTP_CONFLICT = 409;
+const CODE_EMAIL_TAKEN = "EMAIL_ALREADY_REGISTERED";
+const CODE_VALIDATION = "VALIDATION_ERROR";
+const EMAIL_FIELD = "email";
 
 const showUnavailable = () => toast(UNAVAILABLE_MESSAGE);
+
+/** The first message the server gave for the email field, if any. */
+function firstEmailDetail(details: unknown): string | undefined {
+  if (!Array.isArray(details)) return undefined;
+  for (const detail of details as unknown[]) {
+    if (typeof detail !== "object" || detail === null) continue;
+    const { field, message } = detail as { field?: unknown; message?: unknown };
+    if (field === EMAIL_FIELD && typeof message === "string") return message;
+  }
+  return undefined;
+}
+
+/** Message for the email field when the server blamed the address itself. */
+function emailFieldMessage(error: ApiError): string | undefined {
+  if (error.status === HTTP_CONFLICT && error.code === CODE_EMAIL_TAKEN) {
+    return error.message;
+  }
+  if (error.status === HTTP_BAD_REQUEST && error.code === CODE_VALIDATION) {
+    return firstEmailDetail(error.details);
+  }
+  return undefined;
+}
+
+/** Puts a failed "start signup" call where the user will see it. */
+function reportStartFailure(
+  error: unknown,
+  showEmailError: (message: string) => void,
+): void {
+  const apiError = getApiError(error);
+  if (apiError === undefined) {
+    toast(NETWORK_MESSAGE);
+    return;
+  }
+  const fieldMessage = emailFieldMessage(apiError);
+  if (fieldMessage !== undefined) {
+    showEmailError(fieldMessage);
+    return;
+  }
+  toast(apiError.message);
+}
+
+/** Sends the email to the backend, then opens the OTP screen. One request at a time. */
+function useStartSignup(showEmailError: (message: string) => void) {
+  const router = useRouter();
+  const startOtp = useOnboardingStore((state) => state.startOtp);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isRunningRef = useRef(false);
+
+  const submit = async (email: string): Promise<void> => {
+    if (isRunningRef.current) return;
+    isRunningRef.current = true;
+    setIsSubmitting(true);
+    let isStarted = false;
+    try {
+      await authService.startSignup(email, true);
+      isStarted = true;
+    } catch (error) {
+      reportStartFailure(error, showEmailError);
+    } finally {
+      isRunningRef.current = false;
+      setIsSubmitting(false);
+    }
+    if (!isStarted) return;
+    startOtp();
+    router.push("/otp");
+  };
+
+  return { isSubmitting, submit };
+}
 
 export function SignupScreen() {
   const router = useRouter();
   const email = useOnboardingStore((state) => state.form.email);
   const terms = useOnboardingStore((state) => state.form.terms);
   const patchForm = useOnboardingStore((state) => state.patchForm);
-  const startOtp = useOnboardingStore((state) => state.startOtp);
   const [isEmailTouched, setIsEmailTouched] = useState(false);
+  const [serverEmailError, setServerEmailError] = useState<string>();
+  const { isSubmitting, submit } = useStartSignup(setServerEmailError);
 
-  const isEmailValid = isValidEmail(email);
+  const validation = validateForm(signupEmailSchema, {
+    email,
+    acceptTerms: terms,
+  });
+  const schemaEmailError = validation.isValid
+    ? undefined
+    : validation.errors.email;
   const emailError =
-    isEmailTouched && email.length > 0 && !isEmailValid ? EMAIL_ERROR : undefined;
-  const canContinue = isEmailValid && terms;
+    serverEmailError ??
+    (isEmailTouched && email.length > 0 ? schemaEmailError : undefined);
+
+  const handleEmailChange = (text: string) => {
+    patchForm({ email: text.trim() });
+    setServerEmailError(undefined);
+  };
 
   const handleContinue = () => {
-    startOtp();
-    router.push("/otp");
+    if (!validation.isValid || isSubmitting) return;
+    setServerEmailError(undefined);
+    void submit(validation.values.email);
   };
 
   return (
@@ -60,7 +150,7 @@ export function SignupScreen() {
           <Field
             label="Email"
             value={email}
-            onChangeText={(text) => patchForm({ email: text.trim() })}
+            onChangeText={handleEmailChange}
             onBlur={() => setIsEmailTouched(true)}
             error={emailError}
             placeholder="name@example.com"
@@ -96,7 +186,8 @@ export function SignupScreen() {
         <Footer>
           <Button
             label="Continue"
-            disabled={!canContinue}
+            disabled={!validation.isValid}
+            isLoading={isSubmitting}
             onPress={handleContinue}
           />
           <View className="flex-row items-center justify-center gap-1">

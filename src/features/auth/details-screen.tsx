@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { useRouter, type ImperativeRouter } from "expo-router";
 import { useState } from "react";
 import { Keyboard, ScrollView, View } from "react-native";
 
@@ -9,6 +9,8 @@ import { ListGroup, RadioRow } from "@/components/ui/list";
 import { Footer, Screen } from "@/components/ui/screen";
 import { Text } from "@/components/ui/text";
 import { ObBar } from "@/components/ui/top-bar";
+import type { ApiError } from "@/interfaces/auth.interface";
+import { resetTo } from "@/lib/navigation";
 import {
   applyPhoneEdit,
   COUNTRY_CODES,
@@ -19,7 +21,10 @@ import {
   type CountryCode,
 } from "@/lib/phone";
 import { checkDob, type DobCheck } from "@/lib/validation";
+import { authService, getApiError } from "@/services/auth.service";
 import { useOnboardingStore, type SignupForm } from "@/stores/onboarding-store";
+import { toast } from "@/stores/toast-store";
+import type { IDetails } from "@/validation/details.schema";
 
 import { CountryCodeSelect } from "./country-code-select";
 import { DobSheet } from "./dob-sheet";
@@ -93,14 +98,152 @@ function deriveDetails(form: SignupForm, touched: Touched) {
   };
 }
 
-function useDetailsForm() {
+const SESSION_EXPIRED_MESSAGE = "Your signup expired. Start again.";
+const OFFLINE_MESSAGE = "Can't reach MoriCash. Check your connection and try again.";
+const UNAUTHORIZED_STATUS = 401;
+
+/** Errors the server attached to a field; "" means none. */
+type ApiFieldErrors = { dateOfBirth: string; phone: string };
+const NO_API_ERRORS: ApiFieldErrors = { dateOfBirth: "", phone: "" };
+
+type FieldIssue = { field: string; message: string };
+
+/** The backend lost the signup (token expired, or the step is out of order). */
+function isSignupExpired(error: ApiError): boolean {
+  return (
+    error.status === UNAUTHORIZED_STATUS ||
+    error.code === "SIGNUP_STEP_INVALID" ||
+    error.code === "SIGNUP_SESSION_EXPIRED"
+  );
+}
+
+function expireSignup(router: ImperativeRouter): void {
+  toast(SESSION_EXPIRED_MESSAGE);
+  authService.clearSignup();
+  resetTo(router, "/signup");
+}
+
+/** Reads `details: [{ field, message }]` safely; anything else is ignored. */
+function readIssues(details: unknown): FieldIssue[] {
+  if (!Array.isArray(details)) return [];
+  const items: unknown[] = details;
+  return items.flatMap((item) => {
+    const { field, message } = (item ?? {}) as { field?: unknown; message?: unknown };
+    if (typeof message !== "string" || message === "") return [];
+    return [{ field: typeof field === "string" ? field : "", message }];
+  });
+}
+
+const isPhoneField = (field: string): boolean => field === "phone" || field.startsWith("phone.");
+
+/** Date of birth and phone issues land on their field; the rest (names, country) go to a toast. */
+function mapValidationIssues(error: ApiError): {
+  fieldErrors: ApiFieldErrors;
+  toastMessage: string;
+} {
+  const issues = readIssues(error.details);
+  const dateOfBirth = issues.find((issue) => issue.field === "dateOfBirth")?.message ?? "";
+  const phone = issues.find((issue) => isPhoneField(issue.field))?.message ?? "";
+  const other = issues.find(
+    (issue) => issue.field !== "dateOfBirth" && !isPhoneField(issue.field),
+  )?.message;
+  const hasFieldError = dateOfBirth !== "" || phone !== "";
+  return {
+    fieldErrors: { dateOfBirth, phone },
+    toastMessage: other ?? (hasFieldError ? "" : error.message),
+  };
+}
+
+function reportDetailsError(
+  error: unknown,
+  router: ImperativeRouter,
+  setApiErrors: (errors: ApiFieldErrors) => void,
+): void {
+  const apiError = getApiError(error);
+  if (!apiError) {
+    // No answer from the server. Without a signup token there is nothing to retry.
+    if (authService.hasSignupInProgress()) toast(OFFLINE_MESSAGE);
+    else expireSignup(router);
+    return;
+  }
+  if (apiError.code === "COUNTRY_NOT_SUPPORTED") {
+    router.push("/blocked");
+    return;
+  }
+  if (isSignupExpired(apiError)) {
+    expireSignup(router);
+    return;
+  }
+  if (apiError.code === "PHONE_ALREADY_REGISTERED") {
+    setApiErrors({ dateOfBirth: "", phone: apiError.message });
+    return;
+  }
+  if (apiError.code === "VALIDATION_ERROR") {
+    const { fieldErrors, toastMessage } = mapValidationIssues(apiError);
+    setApiErrors(fieldErrors);
+    if (toastMessage !== "") toast(toastMessage);
+    return;
+  }
+  toast(apiError.message);
+}
+
+/** The values `IDetails` expects. The phone is sent as national digits; "Somewhere else" sends none. */
+function buildDetails(
+  form: SignupForm,
+  country: CountryChoice,
+  cc: CountryCode,
+  digits: string,
+): IDetails {
+  return {
+    firstName: form.first.trim(),
+    lastName: form.last.trim(),
+    dateOfBirth: form.dob,
+    country,
+    phoneCountryCode: cc,
+    phone: country === "XX" ? undefined : digits,
+  };
+}
+
+function useDetailsSubmit() {
   const router = useRouter();
+  const commitDetails = useOnboardingStore((state) => state.commitDetails);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [apiErrors, setApiErrors] = useState<ApiFieldErrors>(NO_API_ERRORS);
+
+  const clearApiError = (field: keyof ApiFieldErrors) =>
+    setApiErrors((prev) => (prev[field] === "" ? prev : { ...prev, [field]: "" }));
+
+  const submit = async (form: SignupForm, cc: CountryCode, digits: string) => {
+    const { country } = form;
+    if (isSubmitting || country === "") return;
+    setIsSubmitting(true);
+    setApiErrors(NO_API_ERRORS);
+    try {
+      await authService.submitDetails(buildDetails(form, country, cc, digits));
+    } catch (error: unknown) {
+      reportDetailsError(error, router, setApiErrors);
+      return;
+    } finally {
+      setIsSubmitting(false);
+    }
+    if (country === "XX") {
+      router.push("/blocked");
+      return;
+    }
+    commitDetails();
+    router.push("/pin-create");
+  };
+
+  return { isSubmitting, apiErrors, clearApiError, submit };
+}
+
+function useDetailsForm() {
   const form = useOnboardingStore((state) => state.form);
   const patchForm = useOnboardingStore((state) => state.patchForm);
-  const commitDetails = useOnboardingStore((state) => state.commitDetails);
   const [isDobOpen, setIsDobOpen] = useState(false);
   const [touched, setTouched] = useState<Touched>({ dob: false, phone: false });
   const derived = deriveDetails(form, touched);
+  const api = useDetailsSubmit();
 
   const openDob = () => {
     Keyboard.dismiss();
@@ -111,35 +254,37 @@ function useDetailsForm() {
     patchForm({ dob: value });
     setTouched((prev) => ({ ...prev, dob: true }));
     setIsDobOpen(false);
+    api.clearApiError("dateOfBirth");
   };
 
   const changePhone = (text: string) => {
     const digits = applyPhoneEdit(derived.cc, derived.digits, text);
     patchForm({ phone: formatPhone(derived.cc, digits) });
+    api.clearApiError("phone");
+  };
+
+  const changeCode = (phoneCc: CountryCode) => {
+    patchForm({ phoneCc });
+    api.clearApiError("phone");
   };
 
   const touchPhone = () => setTouched((prev) => ({ ...prev, phone: true }));
-
-  const submit = () => {
-    if (form.country === "XX") {
-      router.push("/blocked");
-      return;
-    }
-    commitDetails();
-    router.push("/pin-create");
-  };
 
   return {
     form,
     patchForm,
     ...derived,
+    dobError: api.apiErrors.dateOfBirth || derived.dobError,
+    phoneMessage: api.apiErrors.phone || derived.phoneMessage,
+    isSubmitting: api.isSubmitting,
     isDobOpen,
     closeDob: () => setIsDobOpen(false),
     openDob,
     finishDob,
     changePhone,
+    changeCode,
     touchPhone,
-    submit,
+    submit: () => api.submit(form, derived.cc, derived.digits),
   };
 }
 
@@ -279,12 +424,19 @@ export function DetailsScreen() {
             digits={d.digits}
             error={d.phoneMessage}
             onChangeText={d.changePhone}
-            onChangeCode={(phoneCc) => d.patchForm({ phoneCc })}
+            onChangeCode={d.changeCode}
             onBlur={d.touchPhone}
           />
         </ScrollView>
         <Footer>
-          <Button label="Continue" onPress={d.submit} disabled={!d.isValid} />
+          <Button
+            label="Continue"
+            onPress={() => {
+              void d.submit();
+            }}
+            disabled={!d.isValid}
+            isLoading={d.isSubmitting}
+          />
         </Footer>
       </KeyboardAvoid>
 

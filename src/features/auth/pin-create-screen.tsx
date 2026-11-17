@@ -19,24 +19,51 @@ const DELETE_KEY = "del";
 const DIGIT_PATTERN = /^\d$/;
 const WEAK_PIN_ERROR =
   "That PIN is easy to guess. Avoid repeated or consecutive digits.";
+const UNEXPECTED_ERROR = "Something went wrong. Try again.";
+
+/** An error message, `null` once the PIN is accepted, or either of those later. */
+export type PinCompletion = string | null | Promise<string | null>;
 
 /**
  * Keypad-driven 6-digit PIN entry shared by the create and confirm screens.
  * `onComplete` runs shortly after the last digit and returns an error message,
- * or `null` once it has accepted the PIN (and navigated on).
+ * or `null` once it has accepted the PIN (and navigated on). It may return a
+ * promise for an async check: the dots stay full and the keypad stays locked
+ * until it settles.
  */
-export function usePinEntry(onComplete: (pin: string) => string | null) {
+export function usePinEntry(onComplete: (pin: string) => PinCompletion) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [shakeKey, setShakeKey] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
       if (timerRef.current !== null) clearTimeout(timerRef.current);
-    },
-    [],
-  );
+    };
+  }, []);
+
+  // Clears the entry and, for an error message, shakes and announces it.
+  const finish = (message: string | null) => {
+    if (!isMountedRef.current) return;
+    setPin("");
+    if (message === null) return;
+    setError(message);
+    announce(message);
+    setShakeKey((count) => count + 1);
+  };
+
+  const complete = (value: string) => {
+    const result = onComplete(value);
+    if (result === null || typeof result === "string") {
+      finish(result);
+      return;
+    }
+    result.then(finish, () => finish(UNEXPECTED_ERROR));
+  };
 
   const handleKey = (key: string) => {
     // A full PIN is waiting to be checked; ignore input until it clears.
@@ -54,16 +81,14 @@ export function usePinEntry(onComplete: (pin: string) => string | null) {
 
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
-      setPin("");
-      const message = onComplete(next);
-      if (message === null) return;
-      setError(message);
-      announce(message);
-      setShakeKey((count) => count + 1);
+      complete(next);
     }, AUTO_ADVANCE_MS);
   };
 
-  return { pin, error, shakeKey, handleKey };
+  // True while a full PIN is being checked (the keypad ignores input then).
+  const isBusy = pin.length === PIN_LENGTH;
+
+  return { pin, error, shakeKey, handleKey, isBusy };
 }
 
 type PinEntryLayoutProps = {

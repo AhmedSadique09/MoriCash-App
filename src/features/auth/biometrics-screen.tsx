@@ -3,15 +3,24 @@ import { useCallback, useEffect, useRef } from "react";
 import { ScrollView } from "react-native";
 
 import { Button } from "@/components/ui/button";
+import type { FaceIdFlag } from "@/interfaces/auth.interface";
 import { Footer, Screen } from "@/components/ui/screen";
 import { StatusRing } from "@/components/ui/status-ring";
 import { Text } from "@/components/ui/text";
 import { PlainBar } from "@/components/ui/top-bar";
+import { authService } from "@/services/auth.service";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { toast } from "@/stores/toast-store";
 
 const RING_ICON_SIZE = 60;
 const FACE_ON_DELAY_MS = 700;
+const SAVE_CHOICE_ERROR =
+  "Couldn't save your Face ID choice. You can change it in Account.";
+
+/** Tells the backend about the choice (1 = Turn on, 0 = Not now) without holding up the screen. */
+function saveFaceIdChoice(faceId: FaceIdFlag): void {
+  authService.setBiometrics(faceId).catch(() => toast(SAVE_CHOICE_ERROR));
+}
 
 export function BiometricsScreen() {
   const router = useRouter();
@@ -53,6 +62,9 @@ export function BiometricsScreen() {
     toast("Face ID is on");
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
+      // Saved together with the navigation, so "Not now" within the delay
+      // cancels it and only one choice ever reaches the backend.
+      saveFaceIdChoice(1);
       goToIntro();
     }, FACE_ON_DELAY_MS);
   };
@@ -62,6 +74,7 @@ export function BiometricsScreen() {
     // Cancels a pending "Turn on" so only one navigation happens.
     clearTimer();
     setFaceId(false);
+    saveFaceIdChoice(0);
     goToIntro();
   };
 

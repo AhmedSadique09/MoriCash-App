@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { useRouter, type ImperativeRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, ScrollView } from "react-native";
 
@@ -10,13 +10,66 @@ import { RuleList } from "@/components/ui/rule-list";
 import { Footer, Screen } from "@/components/ui/screen";
 import { Text } from "@/components/ui/text";
 import { ObBar } from "@/components/ui/top-bar";
+import type { ApiError } from "@/interfaces/auth.interface";
+import { resetTo } from "@/lib/navigation";
 import { isStrongPassword, passwordRules } from "@/lib/validation";
+import { authService, getApiError } from "@/services/auth.service";
 import { useOnboardingStore } from "@/stores/onboarding-store";
+import { toast } from "@/stores/toast-store";
 import { colors } from "@/theme/colors";
 
 const TOGGLE_ICON_SIZE = 18;
 // The button is 32pt; 6pt on every side makes the touch target 44pt.
 const TOGGLE_HIT_SLOP = 6;
+
+const SESSION_EXPIRED_MESSAGE = "Your signup expired. Start again.";
+const OFFLINE_MESSAGE = "Can't reach MoriCash. Check your connection and try again.";
+const UNAUTHORIZED_STATUS = 401;
+
+/** The backend lost the signup (token expired, or the step is out of order). */
+function isSignupExpired(error: ApiError): boolean {
+  return (
+    error.status === UNAUTHORIZED_STATUS ||
+    error.code === "SIGNUP_STEP_INVALID" ||
+    error.code === "SIGNUP_SESSION_EXPIRED"
+  );
+}
+
+function expireSignup(router: ImperativeRouter): void {
+  toast(SESSION_EXPIRED_MESSAGE);
+  authService.clearSignup();
+  resetTo(router, "/signup");
+}
+
+/** First readable message of a `details: [{ field, message }]` list, if any. */
+function firstDetailMessage(details: unknown): string | undefined {
+  if (!Array.isArray(details)) return undefined;
+  const items: unknown[] = details;
+  for (const item of items) {
+    const message = (item as { message?: unknown } | null)?.message;
+    if (typeof message === "string" && message !== "") return message;
+  }
+  return undefined;
+}
+
+function reportPasswordError(error: unknown, router: ImperativeRouter): void {
+  const apiError = getApiError(error);
+  if (!apiError) {
+    // No answer from the server. Without a signup token there is nothing to retry.
+    if (authService.hasSignupInProgress()) toast(OFFLINE_MESSAGE);
+    else expireSignup(router);
+    return;
+  }
+  if (isSignupExpired(apiError)) {
+    expireSignup(router);
+    return;
+  }
+  if (apiError.code === "VALIDATION_ERROR") {
+    toast(firstDetailMessage(apiError.details) ?? apiError.message);
+    return;
+  }
+  toast(apiError.message);
+}
 
 type VisibilityToggleProps = {
   isShown: boolean;
@@ -46,6 +99,20 @@ export function PasswordScreen() {
   const pw = useOnboardingStore((state) => state.form.pw);
   const patchForm = useOnboardingStore((state) => state.patchForm);
   const [isShown, setIsShown] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const submit = async () => {
+    setIsSubmitting(true);
+    try {
+      await authService.createPassword(pw);
+    } catch (error: unknown) {
+      reportPasswordError(error, router);
+      return;
+    } finally {
+      setIsSubmitting(false);
+    }
+    router.push("/details");
+  };
 
   const rules = passwordRules(pw);
   const ruleItems = [
@@ -95,7 +162,10 @@ export function PasswordScreen() {
           <Button
             label="Continue"
             disabled={!isStrongPassword(pw)}
-            onPress={() => router.push("/details")}
+            isLoading={isSubmitting}
+            onPress={() => {
+              void submit();
+            }}
           />
         </Footer>
       </KeyboardAvoid>
