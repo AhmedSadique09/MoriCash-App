@@ -1,5 +1,6 @@
-import { useRouter } from "expo-router";
-import { ScrollView, View } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
+import { RefreshControl, ScrollView, View } from "react-native";
 
 import { Segmented } from "@/components/ui/segmented";
 import { Screen } from "@/components/ui/screen";
@@ -13,6 +14,7 @@ import {
   type Tx,
   type TxFilter,
 } from "@/stores/wallet-store";
+import { colors } from "@/theme/colors";
 
 const HIDDEN_VALUE = "••••••";
 
@@ -40,6 +42,19 @@ export function ActivityScreen() {
   const filter = useWalletStore((s) => s.filter);
   const isHidden = useWalletStore((s) => s.isHidden);
   const setFilter = useWalletStore((s) => s.setFilter);
+  const refresh = useWalletStore((s) => s.refresh);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh]),
+  );
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    void refresh().finally(() => setIsRefreshing(false));
+  };
 
   const visibleTxs = txs.filter((tx) => matchesFilter(tx, filter));
   const sentTotal = fmt(sumByType(txs, "sent"));
@@ -51,7 +66,17 @@ export function ActivityScreen() {
 
   return (
     <Screen>
-      <ScrollView className="flex-1 px-5" contentContainerClassName="pt-1 pb-7">
+      <ScrollView
+        className="flex-1 px-5"
+        contentContainerClassName="pt-1 pb-7"
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.sun}
+          />
+        }
+      >
         <Text
           accessibilityRole="header"
           className="mb-[2px] mt-[10px] font-display text-[30px] leading-[33px] tracking-[-0.75px]"

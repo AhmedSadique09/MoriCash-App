@@ -27,12 +27,22 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/** Backend codes that mean the saved login itself is bad (missing, garbled or expired). */
+const LOGIN_REJECTED_CODES: ReadonlySet<string> = new Set(["UNAUTHORIZED", "TOKEN_EXPIRED"]);
+
+function isLoginRejected(responseBody: unknown): boolean {
+  const code = (responseBody as { error?: { code?: unknown } } | null | undefined)?.error?.code;
+  return typeof code === "string" && LOGIN_REJECTED_CODES.has(code);
+}
+
 api.interceptors.response.use(undefined, async (error: unknown) => {
   // Only a 401 on a call that used the saved login counts: a 401 caused by a
   // token passed in the call's own headers (e.g. the signup token) must not
-  // log the user out. 403 is not "logged out" here: it is a business rule
-  // such as COUNTRY_NOT_SUPPORTED.
-  if (isAxiosError(error) && error.response?.status === 401) {
+  // log the user out. A 401 with another code (e.g. PIN_TOKEN_INVALID, the
+  // 2 minute PIN approval ran out) is a normal error for the screen to show.
+  // 403 is not "logged out" here: it is a business rule such as
+  // COUNTRY_NOT_SUPPORTED.
+  if (isAxiosError(error) && error.response?.status === 401 && isLoginRejected(error.response.data)) {
     const sentToken = error.config?.headers?.get("Authorization");
     if (token && sentToken === `Bearer ${token}` && !isHandlingUnauthorized) {
       isHandlingUnauthorized = true;
@@ -116,7 +126,9 @@ export class HttpService {
     body?: unknown,
     options: AxiosRequestConfig = {},
   ): Promise<T> => {
-    const res = await api.post<T>(url, body, { ...options, signal: this.controller.signal });
+    // A POST without a body goes out as application/x-www-form-urlencoded, which
+    // the backend refuses with 415 (resend OTP, submit KYC): send an empty JSON object.
+    const res = await api.post<T>(url, body ?? {}, { ...options, signal: this.controller.signal });
     return res.data;
   };
 

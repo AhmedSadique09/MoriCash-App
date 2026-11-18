@@ -61,7 +61,12 @@ const TITLES: Record<TrackPhase, string> = {
   bad: "Transfer stopped",
 };
 
-function subtitleFor(phase: TrackPhase, recipient: Person, amount: number): string {
+function subtitleFor(
+  phase: TrackPhase,
+  recipient: Person,
+  amount: number,
+  failure: string | null,
+): string {
   switch (phase) {
     case "rev":
       return "A few quick checks before anything moves.";
@@ -70,7 +75,7 @@ function subtitleFor(phase: TrackPhase, recipient: Person, amount: number): stri
     case "ok":
       return `To ${personName(recipient)} · ${fullPhone(recipient.cc, recipient.num)}`;
     case "bad":
-      return "Nothing was taken from your balance.";
+      return failure ?? "Nothing was taken from your balance.";
   }
 }
 
@@ -399,10 +404,19 @@ type TransferCardProps = {
   meInitials: string;
   recipient: Person;
   amount: number;
+  /** The server's reason when it refused the transfer. */
+  failure?: string | null;
 };
 
 /** The tracker card: you -> them lane, amount, state, review checks, progress. */
-export function TransferCard({ phase, sub, meInitials, recipient, amount }: TransferCardProps) {
+export function TransferCard({
+  phase,
+  sub,
+  meInitials,
+  recipient,
+  amount,
+  failure = null,
+}: TransferCardProps) {
   const isBusy = phase === "rev" || phase === "tx";
 
   return (
@@ -427,7 +441,7 @@ export function TransferCard({ phase, sub, meInitials, recipient, amount }: Tran
         {isBusy ? <BlinkDots /> : null}
       </View>
       <Text className="mt-1 text-center text-[15px] leading-[22px] text-ink-2">
-        {subtitleFor(phase, recipient, amount)}
+        {subtitleFor(phase, recipient, amount, failure)}
       </Text>
       {phase === "rev" ? <ReviewChecklist sub={sub} /> : null}
       <ProgressBar phase={phase} sub={sub} />

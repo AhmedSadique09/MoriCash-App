@@ -12,10 +12,13 @@ import { VerifiedBadge } from "@/components/ui/verified-badge";
 import { fmt } from "@/lib/format";
 import { resetTo } from "@/lib/navigation";
 import { fullPhone } from "@/lib/phone";
+import { useSendStore } from "@/stores/send-store";
 import { toast } from "@/stores/toast-store";
 import { useWalletStore, type Tx } from "@/stores/wallet-store";
 
-import { PEOPLE, personName } from "./people";
+import { flowPerson } from "./flow-person";
+import { PEOPLE, personName, type Person } from "./people";
+import { timelineLabel } from "./send-logic";
 
 const TABULAR_NUMS: TextStyle = { fontVariant: ["tabular-nums"] };
 const FEE_LABEL = "0.00 USDT";
@@ -36,10 +39,10 @@ function buildRows(tx: Tx, mobile: string, balance: number) {
   ];
 }
 
-type ReceiptCardProps = { tx: Tx; balance: number };
+type ReceiptCardProps = { tx: Tx; balance: number; recipient?: Person };
 
-function ReceiptCard({ tx, balance }: ReceiptCardProps) {
-  const person = PEOPLE[tx.whoKey ?? ""];
+function ReceiptCard({ tx, balance, recipient }: ReceiptCardProps) {
+  const person = recipient ?? PEOPLE[tx.whoKey ?? ""];
   const name = person ? personName(person) : tx.title;
   const mobile = person ? fullPhone(person.cc, person.num) : "";
 
@@ -72,7 +75,9 @@ function ReceiptCard({ tx, balance }: ReceiptCardProps) {
         Timeline
       </Text>
       <View className="mb-1 mt-3">
-        <TimelineList items={tx.timeline ?? []} />
+        <TimelineList
+          items={(tx.timeline ?? []).map((item) => ({ ...item, time: timelineLabel(item.time) }))}
+        />
       </View>
     </View>
   );
@@ -80,8 +85,12 @@ function ReceiptCard({ tx, balance }: ReceiptCardProps) {
 
 export function SendReceiptScreen() {
   const router = useRouter();
-  const tx = useWalletStore((s) => s.txs.find((t) => t.type === "sent"));
+  const flow = useSendStore((s) => s.flow);
+  const walletTx = useWalletStore((s) => s.txs.find((t) => t.type === "sent"));
   const balance = useWalletStore((s) => s.balanceUsdt);
+  const tx = flow.sent ?? walletTx;
+  // The flow's recipient is only the right name when this receipt is the transfer just sent.
+  const recipient = tx && tx.ref === flow.ref ? flowPerson(flow) : undefined;
 
   const handleShare = () => toast(SHARE_HINT);
   const handleDone = () => resetTo(router, "/home");
@@ -91,7 +100,7 @@ export function SendReceiptScreen() {
       <TopBar title="Receipt" />
       <ScrollView className="flex-1 px-5" contentContainerClassName="pt-1 pb-7">
         {tx ? (
-          <ReceiptCard tx={tx} balance={balance} />
+          <ReceiptCard tx={tx} balance={balance} recipient={recipient} />
         ) : (
           <Text className="mt-6 text-center text-[15px] leading-[22px] text-ink-2">
             No transfer to show yet.

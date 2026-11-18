@@ -10,6 +10,7 @@ import { SectionHead } from "@/components/ui/section-head";
 import { Text } from "@/components/ui/text";
 import { ObBar } from "@/components/ui/top-bar";
 import { resetTo } from "@/lib/navigation";
+import { authService } from "@/services/auth.service";
 import {
   COUNTRY_NAMES,
   docInfo,
@@ -78,6 +79,10 @@ export function KycReviewScreen() {
 
   const handleSubmit = () => {
     submitKyc();
+    // Saves the result on the account so it survives a reload; the flow doesn't wait for it.
+    authService.submitKyc().catch(() => {
+      toast("Couldn't save your verification. Try again later.");
+    });
     resetTo(router, "/kyc/pending");
   };
 

@@ -1,5 +1,6 @@
-import { useRouter } from "expo-router";
-import { Pressable, ScrollView, View } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
+import { Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { Icon } from "@/components/ui/icon";
 import { ListGroup } from "@/components/ui/list";
@@ -14,6 +15,7 @@ import { simulateIncoming } from "@/features/wallet/simulate-incoming";
 import { fullPhone } from "@/lib/phone";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { useWalletStore } from "@/stores/wallet-store";
+import { colors } from "@/theme/colors";
 
 import { HeroCard } from "./hero-card";
 import { QuickActions } from "./quick-actions";
@@ -101,6 +103,19 @@ export function HomeScreen() {
   const hasUnread = useWalletStore((s) => s.hasUnread);
   const txs = useWalletStore((s) => s.txs);
   const toggleHidden = useWalletStore((s) => s.toggleHidden);
+  const refresh = useWalletStore((s) => s.refresh);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh]),
+  );
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    void refresh().finally(() => setIsRefreshing(false));
+  };
 
   const recent = txs.slice(0, RECENT_COUNT);
   const hasSentTx = txs.some((tx) => tx.type === "sent");
@@ -115,6 +130,13 @@ export function HomeScreen() {
         className="flex-1 px-5"
         contentContainerClassName="pt-1 pb-7"
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.sun}
+          />
+        }
       >
         <HomeHeader
           firstName={user?.first || "there"}

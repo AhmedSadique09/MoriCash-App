@@ -18,7 +18,8 @@ import { useSendStore } from "@/stores/send-store";
 import { useWalletStore } from "@/stores/wallet-store";
 import { colors } from "@/theme/colors";
 
-import { PEOPLE, personInitials, personName } from "./people";
+import { flowPerson } from "./flow-person";
+import { personInitials, personName } from "./people";
 import { MIN_SEND, sendError, sendLeft } from "./send-logic";
 import { SendSteps } from "./send-steps";
 
@@ -123,7 +124,7 @@ export function SendAmountScreen() {
   const balance = useWalletStore((state) => state.balanceUsdt);
   const sentToday = useWalletStore((state) => state.sentToday);
   const country = useOnboardingStore((state) => state.user?.country) ?? "JP";
-  const person = flow.to ? PEOPLE[flow.to] : undefined;
+  const person = flowPerson(flow);
 
   if (!person) return null;
 

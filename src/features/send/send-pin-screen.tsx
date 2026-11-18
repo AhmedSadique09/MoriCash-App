@@ -13,21 +13,22 @@ import { fmt } from "@/lib/format";
 import { useSendStore } from "@/stores/send-store";
 import { toast } from "@/stores/toast-store";
 
-import { PEOPLE, personName } from "./people";
+import { confirmTransfer } from "./confirm-transfer";
+import { flowPerson } from "./flow-person";
+import { personName } from "./people";
 
 const SOON_MESSAGE = "Not part of this prototype yet";
 
 export function SendPinScreen() {
   const router = useRouter();
   const flow = useSendStore((state) => state.flow);
-  const person = flow.to ? PEOPLE[flow.to] : undefined;
+  const person = flowPerson(flow);
   const amount = Number.parseFloat(flow.amount) || 0;
 
-  // Prototype: any 6-digit PIN confirms the transfer.
-  const { pin, error, shakeKey, handleKey } = usePinEntry(() => {
-    router.replace("/send/track");
-    return null;
-  });
+  // The dots stay full and the keypad stays locked while the PIN and the transfer are checked.
+  const { pin, error, shakeKey, handleKey } = usePinEntry((value) =>
+    confirmTransfer(router, value),
+  );
 
   const subtitle = person
     ? `Send ${fmt(amount)} USDT to ${personName(person)}.`

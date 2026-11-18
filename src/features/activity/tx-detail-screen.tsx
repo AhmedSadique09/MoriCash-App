@@ -18,7 +18,6 @@ import { TimelineList } from "@/components/ui/timeline-list";
 import { TopBar } from "@/components/ui/top-bar";
 import { VerifiedBadge } from "@/components/ui/verified-badge";
 import {
-  PEOPLE,
   personInitials,
   personName,
   type Person,
@@ -27,7 +26,12 @@ import { cn } from "@/lib/cn";
 import { fmt } from "@/lib/format";
 import { fullPhone } from "@/lib/phone";
 import { toast } from "@/stores/toast-store";
-import { useWalletStore, type Tx, type TxType } from "@/stores/wallet-store";
+import {
+  txPerson,
+  useWalletStore,
+  type Tx,
+  type TxType,
+} from "@/stores/wallet-store";
 
 type DetailRows = ComponentProps<typeof DetailList>["rows"];
 
@@ -81,7 +85,9 @@ function personRows(tx: Tx, person: Person): DetailRows {
       label: tx.type === "sent" ? "To" : "From",
       value: <PersonValue person={person} />,
     },
-    { label: "Mobile", value: fullPhone(person.cc, person.num) },
+    ...(person.num
+      ? [{ label: "Mobile", value: fullPhone(person.cc, person.num) }]
+      : []),
     {
       label: "Verified by",
       value: tx.via === "qr" ? "QR code" : "Mobile number",
@@ -187,7 +193,7 @@ async function copyReference(reference: string): Promise<void> {
 }
 
 function TxContent({ tx }: { tx: Tx }) {
-  const person = tx.whoKey ? PEOPLE[tx.whoKey] : undefined;
+  const person = txPerson(tx);
   const rows = buildRows(tx, person, () => void copyReference(tx.ref));
 
   return (

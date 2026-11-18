@@ -8,7 +8,6 @@ import { Icon } from "@/components/ui/icon";
 import type { IconName } from "@/components/ui/icon-paths";
 import { Keypad } from "@/components/ui/keypad";
 import { PersonAvatar } from "@/components/ui/person-avatar";
-import { PersonCard } from "@/components/ui/person-card";
 import { Footer, Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
 import { Text } from "@/components/ui/text";
@@ -23,17 +22,19 @@ import {
   type CountryCode,
 } from "@/lib/phone";
 import { useOnboardingStore } from "@/stores/onboarding-store";
-import { useSendStore } from "@/stores/send-store";
+import { useSendStore, type SendRecipient } from "@/stores/send-store";
 import { toast } from "@/stores/toast-store";
 import { colors } from "@/theme/colors";
 
+import { personFromRecipient } from "./flow-person";
+import { lookupOutcome } from "./lookup-recipient";
 import { DigitMeter, PhoneEntryBox } from "./phone-display";
 import { PEOPLE, demoNumbers, personInitials, personName, type DemoNumber } from "./people";
+import { RecipientCard } from "./recipient-card";
 import { SendSteps } from "./send-steps";
 import {
   VERIFY_STEP_MS,
   phoneChecks,
-  phoneOutcome,
   type Look,
   type VerifyOutcome,
 } from "./send-logic";
@@ -50,27 +51,38 @@ type PhoneState = {
   num: string;
   look: Look;
   to: string | null;
+  /** The account the server found for the number. */
+  recipient: SendRecipient | null;
   out: VerifyOutcome | null;
   vstep: number;
   hasZero: boolean;
 };
+
+type LookupAnswer = { cc: CountryCode; num: string };
 
 type PhoneAction =
   | { type: "key"; key: string }
   | { type: "toggleCc" }
   | { type: "clear" }
   | { type: "fill"; cc: CountryCode; num: string }
-  | { type: "verify"; out: VerifyOutcome }
+  | { type: "verifyStart" }
+  | ({ type: "verifyOutcome"; out: VerifyOutcome } & LookupAnswer)
+  | ({ type: "verifyAbort" } & LookupAnswer)
   | { type: "tick" }
   | { type: "finish" };
 
-const IDLE: Pick<PhoneState, "look" | "to" | "out" | "vstep" | "hasZero"> = {
+const IDLE: Pick<PhoneState, "look" | "to" | "recipient" | "out" | "vstep" | "hasZero"> = {
   look: "idle",
   to: null,
+  recipient: null,
   out: null,
   vstep: 0,
   hasZero: false,
 };
+
+/** A late answer for a number the user has since changed must not touch the screen. */
+const isCurrentLookup = (state: PhoneState, answer: LookupAnswer): boolean =>
+  state.look === "verifying" && state.cc === answer.cc && state.num === answer.num;
 
 const otherCountry = (cc: CountryCode): CountryCode => (cc === "+81" ? "+63" : "+81");
 
@@ -93,12 +105,23 @@ function phoneReducer(state: PhoneState, action: PhoneAction): PhoneState {
       return { ...state, ...IDLE, num: "" };
     case "fill":
       return { ...state, ...IDLE, cc: action.cc, num: action.num };
-    case "verify":
-      return { ...state, look: "verifying", out: action.out, vstep: 0, to: null };
+    case "verifyStart":
+      return { ...state, look: "verifying", out: null, vstep: 0, to: null, recipient: null };
+    case "verifyOutcome":
+      return isCurrentLookup(state, action) ? { ...state, out: action.out } : state;
+    case "verifyAbort":
+      return isCurrentLookup(state, action) ? { ...state, look: "idle", out: null, vstep: 0 } : state;
     case "tick":
       return { ...state, vstep: state.vstep + 1 };
     case "finish":
-      return state.out ? { ...state, look: state.out.look, to: state.out.to } : state;
+      return state.out
+        ? {
+            ...state,
+            look: state.out.look,
+            to: state.out.to,
+            recipient: state.out.recipient ?? null,
+          }
+        : state;
   }
 }
 
@@ -265,12 +288,15 @@ function VerifyingCard({ state }: { state: PhoneState }) {
 
 type FailureCopy = { title: string; message: string };
 
-function failureCopy(look: Look, firstName: string | undefined): FailureCopy {
+const SELF_MESSAGE = "You can't send money to yourself. To get paid, show your code instead.";
+
+function failureCopy(
+  look: Look,
+  firstName: string | undefined,
+  serverMessage?: string,
+): FailureCopy {
   if (look === "self") {
-    return {
-      title: "That's your number",
-      message: "You can't send money to yourself. To get paid, show your code instead.",
-    };
+    return { title: "That's your number", message: serverMessage ?? SELF_MESSAGE };
   }
   if (look === "restricted") {
     return {
@@ -301,7 +327,7 @@ type FailureCardProps = { state: PhoneState; onShowCode: () => void };
 function FailureCard({ state, onShowCode }: FailureCardProps) {
   const { cc, num, look, to, out } = state;
   const person = to ? PEOPLE[to] : undefined;
-  const copy = failureCopy(look, person?.first);
+  const copy = failureCopy(look, person?.first, out?.message);
   const failAt = out?.failAt ?? -1;
   const extra: { label: string; icon: IconName; onPress: () => void } | null =
     look === "self"
@@ -387,7 +413,7 @@ type ResultAreaProps = { state: PhoneState; isBad: boolean; actions: ResultActio
 type ResultActions = { onScan: () => void; onShowCode: () => void };
 
 function ResultArea({ state, isBad, actions }: ResultAreaProps) {
-  const { cc, num, look, to } = state;
+  const { cc, num, look, recipient } = state;
 
   if (!num) {
     return (
@@ -406,7 +432,9 @@ function ResultArea({ state, isBad, actions }: ResultAreaProps) {
   if (num.length < COUNTRY_CODES[cc].length) return <ProgressHint state={state} />;
   if (look === "idle") return <ReadyCard number={fullPhone(cc, num)} />;
   if (look === "verifying") return <VerifyingCard state={state} />;
-  if (look === "found" && to) return <PersonCard personKey={to} />;
+  if (look === "found" && recipient) {
+    return <RecipientCard person={personFromRecipient(recipient)} />;
+  }
   return <FailureCard state={state} onShowCode={actions.onShowCode} />;
 }
 
@@ -437,7 +465,7 @@ export function SendRecipientScreen() {
   const [state, dispatch] = useReducer(phoneReducer, undefined, initPhoneState);
   useVerifyBeats(state, dispatch);
 
-  const { cc, num, look, to, hasZero } = state;
+  const { cc, num, look, to, recipient, hasZero } = state;
   const self = user ? { cc: user.cc, num: user.num } : null;
   const length = COUNTRY_CODES[cc].length;
   const isBad = phoneError(cc, num, false) !== "";
@@ -452,9 +480,15 @@ export function SendRecipientScreen() {
     dispatch({ type: "toggleCc" });
     toast(`Country code ${next} · ${COUNTRY_CODES[next].name}`);
   };
+  const handleVerify = () => {
+    dispatch({ type: "verifyStart" });
+    void lookupOutcome(cc, num).then((out) =>
+      dispatch(out ? { type: "verifyOutcome", cc, num, out } : { type: "verifyAbort", cc, num }),
+    );
+  };
   const handleContinue = () => {
-    if (!to) return;
-    patchFlow({ to, cc, num, via: "phone" });
+    if (!to && !recipient) return;
+    patchFlow({ to, recipient, cc, num, via: "phone" });
     router.push("/send/amount");
   };
   const actions: ResultActions = {
@@ -496,7 +530,7 @@ export function SendRecipientScreen() {
         <Cta
           look={look}
           canVerify={isValidMobile(cc, num)}
-          onVerify={() => dispatch({ type: "verify", out: phoneOutcome(self, cc, num) })}
+          onVerify={handleVerify}
           onContinue={handleContinue}
           onReset={() => dispatch({ type: "clear" })}
         />

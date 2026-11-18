@@ -5,6 +5,7 @@ import type {
   ApiError,
   ApiErrorBody,
   FaceIdFlag,
+  KycStatus,
   LoginResult,
   ResendOtpResult,
   SignupResult,
@@ -13,6 +14,7 @@ import type {
   StartSignupResult,
   UserProfile,
 } from "@/interfaces/auth.interface";
+import type { PinVerifyResult } from "@/interfaces/transfer.interface";
 import type { IDetails } from "@/validation/details.schema";
 
 import { HttpService } from "./base.service";
@@ -167,6 +169,26 @@ export class AuthService extends HttpService {
       "auth/me/biometrics",
       { faceId },
     );
+    return body.data;
+  }
+
+  /**
+   * KYC review screen: "Submit for review". The demo backend marks the user
+   * `approved` at once and never demotes. Needs the access token.
+   */
+  async submitKyc(): Promise<{ kycStatus: KycStatus }> {
+    const body = await this.post<ApiEnvelope<{ kycStatus: KycStatus }>>("kyc/submit");
+    return body.data;
+  }
+
+  /**
+   * Send money: checks the 6-digit PIN and returns the short-lived `pinToken`
+   * that `POST transfers` asks for. Needs the access token.
+   * Wrong PIN: 422 PIN_INVALID (`details.attemptsLeft`); too many: 429 PIN_LOCKED
+   * (`details.retryAfterSeconds`).
+   */
+  async verifyPin(pin: string): Promise<PinVerifyResult> {
+    const body = await this.post<ApiEnvelope<PinVerifyResult>>("auth/pin/verify", { pin });
     return body.data;
   }
 

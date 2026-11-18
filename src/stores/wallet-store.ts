@@ -1,7 +1,20 @@
 import { create } from "zustand";
 
-import { INCOMING_PAYMENTS, PEOPLE, personName } from "@/features/send/people";
-import { formatDateLabel, nowHm } from "@/lib/format";
+import {
+  INCOMING_PAYMENTS,
+  PEOPLE,
+  personName,
+  type Person,
+} from "@/features/send/people";
+import type {
+  TransactionDto,
+  TransactionStatus,
+} from "@/interfaces/wallet.interface";
+import { clockHms, formatDateLabel, nowHm } from "@/lib/format";
+import { COUNTRY_CODES, type CountryCode } from "@/lib/phone";
+import { getApiError } from "@/services/auth.service";
+import { walletService } from "@/services/wallet.service";
+import { toast } from "@/stores/toast-store";
 
 export type TxType = "deposit" | "sent" | "received";
 
@@ -13,8 +26,13 @@ export type Tx = {
   asset: "USDT";
   /** Signed: negative when money leaves the wallet. */
   amount: number;
-  status: "Completed";
+  status: TransactionStatus;
+  /** Demo person (`PEOPLE` key). Real transactions carry `whoName` instead. */
   whoKey?: string;
+  /** The other side as the backend names it: "Haruki M.". */
+  whoName?: string;
+  whoCountryCode?: string;
+  whoNumber?: string;
   note?: string;
   via?: "phone" | "qr";
   ref: string;
@@ -54,6 +72,10 @@ type Actions = {
   toggleHidden: () => void;
   setFilter: (f: TxFilter) => void;
   markRead: () => void;
+  /** Loads the wallet and the first page of transactions from the backend and replaces the local copy. Never throws. */
+  refresh: () => Promise<void>;
+  /** Puts a transfer the backend confirmed on top of the list and sets balance and sentToday. */
+  applyTransfer: (tx: Tx, balanceUsdt: number, sentTodayUsdt: number) => void;
   /** Deducts the balance, adds to sentToday, prepends a "sent" tx and returns it. */
   recordSent: (a: SentInput) => Tx;
   /** Adds to the balance, flags unread, prepends a highlighted "received" tx and returns it. */
@@ -66,43 +88,112 @@ type Actions = {
 /** How long a freshly received row stays highlighted. */
 export const HIGHLIGHT_MS = 10000;
 
-const START_BALANCE_USDT = 500;
 const REF_BASE = 5100;
-
-const SEED_DEPOSIT: Tx = {
-  id: "t0",
-  type: "deposit",
-  title: "Added USDT",
-  sub: "Bank transfer",
-  asset: "USDT",
-  amount: 500,
-  status: "Completed",
-  ref: "MC-DEP-1187",
-  whenLabel: "Yesterday · 18:20",
-  dateLabel: "15 Nov 2026 · 18:20",
-  method: "Bank transfer",
-  fee: "Free",
-};
+const FIRST_PAGE_SIZE = 20;
+const HTTP_UNAUTHORIZED = 401;
+const LOAD_ERROR_MESSAGE = "Can't load your wallet. Pull to retry.";
 
 const INITIAL_STATE: State = {
-  balanceUsdt: START_BALANCE_USDT,
+  balanceUsdt: 0,
   sentToday: 0,
   isHidden: false,
   hasUnread: false,
-  txs: [SEED_DEPOSIT],
+  txs: [],
   filter: "all",
   incomingIndex: 0,
 };
 
 const roundCents = (n: number): number => Math.round(n * 100) / 100;
 
-/** Ids are t0 (seed), t1, t2... Transactions are only ever prepended, so the length is the next id. */
+/** Local demo ids are t0, t1, t2... Backend rows keep their own ids. */
 const nextId = (txs: readonly Tx[]): string => `t${txs.length}`;
 
 const personLabel = (key: string): string => {
   const person = PEOPLE[key];
   return person ? personName(person) : "Unknown";
 };
+
+const isSameDay = (a: Date, b: Date): boolean =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+/** "Today · 09:41", "Yesterday · 18:20", or "15 Nov · 18:20" for older rows. */
+function whenLabelOf(created: Date, now: Date): string {
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (isSameDay(created, now)) return `Today · ${nowHm(created)}`;
+  if (isSameDay(created, yesterday)) return `Yesterday · ${nowHm(created)}`;
+  const [date = "", time = ""] = formatDateLabel(created).split(" · ");
+  return `${date.split(" ").slice(0, 2).join(" ")} · ${time}`;
+}
+
+/** Second line of a list row for money moved between people: the note, else the direction. */
+function rowSubtitle(dto: TransactionDto): string | undefined {
+  if (dto.type === "deposit") return undefined;
+  return dto.note || (dto.type === "sent" ? "Sent" : "Received");
+}
+
+/** Backend transaction -> what the screens render. */
+export function mapTransaction(dto: TransactionDto): Tx {
+  const created = new Date(dto.createdAt);
+  return {
+    id: dto.id,
+    type: dto.type,
+    title: dto.title,
+    sub: dto.sub ?? rowSubtitle(dto),
+    asset: dto.asset,
+    amount: dto.amount,
+    status: dto.status,
+    whoName: dto.whoName,
+    whoCountryCode: dto.whoCountryCode,
+    whoNumber: dto.whoNumber,
+    note: dto.note,
+    via: dto.via,
+    ref: dto.ref,
+    whenLabel: whenLabelOf(created, new Date()),
+    dateLabel: formatDateLabel(created),
+    method: dto.method,
+    fee: dto.fee,
+    timeline: dto.timeline.length
+      ? dto.timeline.map(({ title, time }) => ({
+          title,
+          time: clockHms(new Date(time)),
+        }))
+      : undefined,
+  };
+}
+
+const isCountryCode = (value: string | undefined): value is CountryCode =>
+  value !== undefined && Object.keys(COUNTRY_CODES).includes(value);
+
+/** The other side of a transaction: a demo person, or the real one the backend named. */
+export function txPerson(tx: Tx): Person | undefined {
+  if (tx.whoKey) return PEOPLE[tx.whoKey];
+  if (!tx.whoName) return undefined;
+  const [first = "", ...rest] = tx.whoName.split(" ");
+  return {
+    key: tx.id,
+    first,
+    last: rest.join(" "),
+    cc: isCountryCode(tx.whoCountryCode) ? tx.whoCountryCode : "+81",
+    num: tx.whoNumber ?? "",
+    since: "",
+  };
+}
+
+async function fetchWalletSnapshot(): Promise<
+  Pick<State, "balanceUsdt" | "sentToday" | "txs">
+> {
+  const [wallet, page] = await Promise.all([
+    walletService.getWallet(),
+    walletService.listTransactions({ filter: "all", limit: FIRST_PAGE_SIZE }),
+  ]);
+  return {
+    balanceUsdt: wallet.balanceUsdt,
+    sentToday: wallet.sentTodayUsdt,
+    txs: page.items.map((item) => mapTransaction(item)),
+  };
+}
 
 export const useWalletStore = create<State & Actions>((set, get) => ({
   ...INITIAL_STATE,
@@ -112,6 +203,22 @@ export const useWalletStore = create<State & Actions>((set, get) => ({
   setFilter: (filter) => set({ filter }),
 
   markRead: () => set({ hasUnread: false }),
+
+  refresh: async () => {
+    try {
+      set(await fetchWalletSnapshot());
+    } catch (error) {
+      // A 401 already logs the user out; no toast over the login screen.
+      if (getApiError(error)?.status !== HTTP_UNAUTHORIZED) toast(LOAD_ERROR_MESSAGE);
+    }
+  },
+
+  applyTransfer: (tx, balanceUsdt, sentTodayUsdt) =>
+    set((s) => ({
+      balanceUsdt,
+      sentToday: sentTodayUsdt,
+      txs: [tx, ...s.txs.filter((item) => item.id !== tx.id)],
+    })),
 
   recordSent: ({ whoKey, amount, note, via, ref, timeline }) => {
     const { txs } = get();

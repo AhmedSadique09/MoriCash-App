@@ -9,7 +9,6 @@ import { Screen } from "@/components/ui/screen";
 import { Text } from "@/components/ui/text";
 import { TopBar } from "@/components/ui/top-bar";
 import {
-  PEOPLE,
   personInitials,
   personName,
   type Person,
@@ -18,7 +17,7 @@ import { cn } from "@/lib/cn";
 import { fmt } from "@/lib/format";
 import { fullPhone } from "@/lib/phone";
 import { useOnboardingStore, type Tier } from "@/stores/onboarding-store";
-import { useWalletStore, type Tx } from "@/stores/wallet-store";
+import { txPerson, useWalletStore, type Tx } from "@/stores/wallet-store";
 
 const MAX_TX_NOTIFICATIONS = 6;
 
@@ -32,14 +31,15 @@ type NotificationItem = {
 };
 
 function fromTx(tx: Tx): NotificationItem {
-  const person = tx.whoKey ? PEOPLE[tx.whoKey] : undefined;
+  const person = txPerson(tx);
 
   if (tx.type === "sent" && person) {
+    const phone = person.num ? ` · ${fullPhone(person.cc, person.num)}` : "";
     return {
       id: tx.id,
       person,
       title: `You sent ${fmt(-tx.amount)} USDT`,
-      subtitle: `To ${personName(person)} · ${fullPhone(person.cc, person.num)}`,
+      subtitle: `To ${personName(person)}${phone}`,
       when: tx.whenLabel,
     };
   }

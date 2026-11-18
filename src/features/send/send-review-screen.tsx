@@ -34,7 +34,8 @@ import { useSendStore } from "@/stores/send-store";
 import { useWalletStore } from "@/stores/wallet-store";
 import { colors } from "@/theme/colors";
 
-import { PEOPLE, personInitials, personName } from "./people";
+import { flowPerson } from "./flow-person";
+import { personInitials, personName } from "./people";
 import { sendError } from "./send-logic";
 import { SendSteps } from "./send-steps";
 
@@ -177,7 +178,7 @@ export function SendReviewScreen() {
   const balance = useWalletStore((state) => state.balanceUsdt);
   const sentToday = useWalletStore((state) => state.sentToday);
   const user = useOnboardingStore((state) => state.user);
-  const person = flow.to ? PEOPLE[flow.to] : undefined;
+  const person = flowPerson(flow);
 
   if (!person) return null;
 

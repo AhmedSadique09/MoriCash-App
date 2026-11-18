@@ -1,5 +1,6 @@
 import type { IconName } from "@/components/ui/icon-paths";
 import { COUNTRY_CODES, type CountryCode } from "@/lib/phone";
+import type { SendRecipient } from "@/stores/send-store";
 
 import { PEOPLE, findPersonKey } from "./people";
 
@@ -52,6 +53,10 @@ export type VerifyOutcome = {
   /** Index of the check that fails; -1 means every check passes. */
   failAt: number;
   why: string;
+  /** The real account when the server found one. */
+  recipient?: SendRecipient;
+  /** The server's own words for the failure, shown instead of the stock copy. */
+  message?: string;
 };
 
 export function phoneChecks(cc: CountryCode): string[] {
@@ -153,6 +158,19 @@ export const TRACK_STAGES: readonly { title: string; desc: string }[] = [
   { title: "Transferring", desc: "Moving the money to the recipient" },
   { title: "Transferred", desc: "Delivered to the recipient" },
 ];
+
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T/;
+const CLOCK_PART_LENGTH = 2;
+
+/** "09:41:22" for a server timeline time (ISO 8601); anything else is shown as it is. */
+export function timelineLabel(time: string): string {
+  if (!ISO_TIME.test(time)) return time;
+  const date = new Date(time);
+  if (Number.isNaN(date.getTime())) return time;
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map((part) => String(part).padStart(CLOCK_PART_LENGTH, "0"))
+    .join(":");
+}
 
 export const REVIEW_ITEMS: readonly { icon: IconName; label: string }[] = [
   { icon: "wallet", label: "Balance available" },

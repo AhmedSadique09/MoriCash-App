@@ -1,16 +1,10 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer } from "react";
 import { useReducedMotion } from "react-native-reanimated";
 
 import { clockHms } from "@/lib/format";
-import { useSendStore, type SendFlow } from "@/stores/send-store";
-import { useWalletStore } from "@/stores/wallet-store";
+import { useSendStore } from "@/stores/send-store";
 
-import {
-  REVIEW_ITEMS,
-  REVIEW_STEP_MS,
-  TRACK_STAGES,
-  TRANSFER_MS,
-} from "./send-logic";
+import { REVIEW_ITEMS, REVIEW_STEP_MS, TRANSFER_MS } from "./send-logic";
 
 /** rev = reviewing, tx = transferring, ok = sent, bad = stopped. */
 export type TrackPhase = "rev" | "tx" | "ok" | "bad";
@@ -80,39 +74,20 @@ export function parseAmount(raw: string): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-function buildTimeline(times: readonly string[]): { title: string; time: string }[] {
-  return TRACK_STAGES.map((stage, index) => ({
-    title: stage.title,
-    time: times[index] ?? "",
-  }));
-}
-
-function recordTransfer(flow: SendFlow, times: readonly string[]): void {
-  const amount = parseAmount(flow.amount);
-  if (!flow.to || amount <= 0) return;
-  useWalletStore.getState().recordSent({
-    whoKey: flow.to,
-    amount,
-    note: flow.note.trim(),
-    via: flow.via,
-    ref: flow.ref,
-    timeline: buildTimeline(times),
-  });
-}
-
 export type TransferPipeline = PipelineState & { phase: TrackPhase };
 
 /**
- * Drives the tracking screen: review checks, then the transfer, then success
- * (records the sent tx exactly once) or the prototype's stage-2 failure.
+ * Drives the tracking screen: review checks, then the transfer, then success or
+ * the failed state. The money already moved (or was refused) on the PIN screen;
+ * this replays it as stages. It ends in failure when the server refused the
+ * transfer (`flow.failure`) or the prototype's "make this fail" switch is on.
  */
 export function useTransferPipeline(): TransferPipeline {
   const flow = useSendStore((s) => s.flow);
   const isReduced = useReducedMotion();
   const [state, dispatch] = useReducer(reducer, undefined, initPipeline);
-  const hasRecorded = useRef(false);
   const phase = trackPhase(state);
-  const { sub, times } = state;
+  const { sub } = state;
 
   useEffect(() => {
     if (phase === "ok" || phase === "bad") return;
@@ -123,15 +98,11 @@ export function useTransferPipeline(): TransferPipeline {
     };
 
     const handleTransferTick = () => {
-      if (flow.shouldFail) {
+      if (flow.shouldFail || flow.failure !== null) {
         dispatch({ type: "failed" });
         return;
       }
-      if (hasRecorded.current) return;
-      hasRecorded.current = true;
-      const at = clockHms();
-      recordTransfer(flow, [...times, at]);
-      dispatch({ type: "transferred", at });
+      dispatch({ type: "transferred", at: clockHms() });
     };
 
     const reviewDelay = sub < REVIEW_ITEMS.length ? REVIEW_STEP_MS : AFTER_REVIEW_MS;
@@ -144,7 +115,7 @@ export function useTransferPipeline(): TransferPipeline {
       delay,
     );
     return () => clearTimeout(timer);
-  }, [phase, sub, times, flow, isReduced]);
+  }, [phase, sub, flow, isReduced]);
 
   return { ...state, phase };
 }

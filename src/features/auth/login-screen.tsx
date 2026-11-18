@@ -8,11 +8,11 @@ import { KeyboardAvoid } from "@/components/ui/keyboard-avoid";
 import { Footer, Screen } from "@/components/ui/screen";
 import { Text } from "@/components/ui/text";
 import { TopBar } from "@/components/ui/top-bar";
-import type { UserProfile } from "@/interfaces/auth.interface";
+import type { KycStatus, UserProfile } from "@/interfaces/auth.interface";
 import { resetTo } from "@/lib/navigation";
 import type { CountryCode } from "@/lib/phone";
 import { authService, getApiError } from "@/services/auth.service";
-import { useOnboardingStore, type User } from "@/stores/onboarding-store";
+import { useOnboardingStore, type Tier, type User } from "@/stores/onboarding-store";
 import { toast } from "@/stores/toast-store";
 import { loginSchema, validateForm } from "@/validation";
 
@@ -29,6 +29,12 @@ function toAppDate(isoDate: string): string {
 function toCountryCode(value: string, country: UserProfile["country"]): CountryCode {
   if (value === "+81" || value === "+63") return value;
   return country === "PH" ? "+63" : "+81";
+}
+
+/** The Home screen asks to "Verify your identity" until the tier is 1, so keep what the backend remembers. */
+function toTier(kycStatus: KycStatus): Tier {
+  if (kycStatus === "approved") return 1;
+  return kycStatus === "pending" ? "pending" : 0;
 }
 
 /** Maps the backend's profile to the user shape the Home and KYC screens read. */
@@ -114,7 +120,10 @@ export function LoginScreen() {
     try {
       const session = await authService.login(form.values.email, form.values.password);
       if (!isMountedRef.current) return;
-      useOnboardingStore.setState({ user: toStoreUser(session.user) });
+      useOnboardingStore.setState({
+        user: toStoreUser(session.user),
+        tier: toTier(session.user.kycStatus),
+      });
       resetTo(router, "/home");
       toast(`Welcome back, ${session.user.firstName}`);
     } catch (error: unknown) {

@@ -53,6 +53,9 @@ export interface SignupSession {
   expiresAt: string;
 }
 
+/** Identity check state kept by the backend: "pending" while under review, "approved" once done. */
+export type KycStatus = "none" | "pending" | "approved";
+
 /** The signed-in user, as the backend returns it. */
 export interface UserProfile {
   id: string;
@@ -63,6 +66,7 @@ export interface UserProfile {
   country: "JP" | "PH";
   phone: { countryCode: string; number: string; e164: string };
   faceId: FaceIdFlag;
+  kycStatus: KycStatus;
   createdAt: string;
 }
 

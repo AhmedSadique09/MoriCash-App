@@ -20,6 +20,7 @@ import { useOnboardingStore } from "@/stores/onboarding-store";
 import { useSendStore } from "@/stores/send-store";
 import { useWalletStore } from "@/stores/wallet-store";
 
+import { flowPerson } from "./flow-person";
 import { PEOPLE, personInitials, personName, type Person } from "./people";
 import { TRACK_STAGES } from "./send-logic";
 import { TransferCard } from "./transfer-card";
@@ -212,7 +213,7 @@ export function SendTrackScreen() {
   const user = useOnboardingStore((s) => s.user);
   const balance = useWalletStore((s) => s.balanceUsdt);
   const { phase, sub, stage, failedAt, times } = useTransferPipeline();
-  const recipient = PEOPLE[flow.to ?? ""] ?? FALLBACK_RECIPIENT;
+  const recipient = flowPerson(flow) ?? FALLBACK_RECIPIENT;
   const amount = parseAmount(flow.amount);
 
   useEffect(() => {
@@ -236,6 +237,7 @@ export function SendTrackScreen() {
           meInitials={user ? personInitials(user) : FALLBACK_ME_INITIALS}
           recipient={recipient}
           amount={amount}
+          failure={flow.failure}
         />
         <LiveTimeline
           phase={phase}
