@@ -5,6 +5,7 @@ import type {
   ApiError,
   ApiErrorBody,
   FaceIdFlag,
+  LoginResult,
   ResendOtpResult,
   SignupResult,
   SignupSession,
@@ -132,6 +133,21 @@ export class AuthService extends HttpService {
     );
     await HttpService.setToken(body.data.accessToken);
     this.signupToken = "";
+    return body.data;
+  }
+
+  /**
+   * Sign in with email + password. On success the access token is saved
+   * (`HttpService.setToken`) and any half-finished signup is dropped.
+   * A wrong email or password throws 401 INVALID_CREDENTIALS.
+   */
+  async login(email: string, password: string): Promise<LoginResult> {
+    const body = await this.post<ApiEnvelope<LoginResult>>("auth/login", {
+      email,
+      password,
+    });
+    await HttpService.setToken(body.data.accessToken);
+    this.clearSignup();
     return body.data;
   }
 

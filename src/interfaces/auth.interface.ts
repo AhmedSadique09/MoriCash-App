@@ -74,6 +74,9 @@ export interface SignupResult {
   user: UserProfile;
 }
 
+/** Answer of sign in: same shape as a finished signup. */
+export type LoginResult = SignupResult;
+
 /** Every backend success is `{ success: true, data, error: null }`. */
 export interface ApiEnvelope<T> {
   success: true;
